@@ -1,0 +1,165 @@
+pub mod overview;
+pub mod history;
+pub mod insights;
+pub mod configuration;
+pub mod timeline;
+
+use crate::inspector::{DeltaTableInspector, TableStatistics};
+use crate::insights::DeltaTableAnalyzer;
+use anyhow::Result;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Tabs},
+    Frame, Terminal,
+};
+use std::io;
+
+pub fn run_tui(table_path: &str) -> Result<()> {
+    // Setup terminal
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )?;
+
+    // Initialize inspector
+    let rt = tokio::runtime::Runtime::new()?;
+    let inspector = rt.block_on(DeltaTableInspector::new(table_path))?;
+    let stats = rt.block_on(inspector.get_statistics())?;
+    let history = rt.block_on(inspector.get_history(false))?;
+
+    let mut app = App {
+        table_path: table_path.to_string(),
+        inspector,
+        stats: stats.clone(),
+        history: history.clone(),
+        current_tab: 0,
+        should_quit: false,
+    };
+
+    // Main event loop
+    loop {
+        terminal.draw(|f| app.ui(f))?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Press {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Tab => {
+                        app.current_tab = (app.current_tab + 1) % 5;
+                    }
+                    KeyCode::Right => {
+                        app.current_tab = (app.current_tab + 1) % 5;
+                    }
+                    KeyCode::Left => {
+                        app.current_tab = if app.current_tab == 0 {
+                            4
+                        } else {
+                            app.current_tab - 1
+                        };
+                    }
+                    _ => {
+                        // Handle tab-specific keys
+                        app.handle_key(key.code);
+                    }
+                }
+            }
+        }
+
+        if app.should_quit {
+            break;
+        }
+    }
+
+    // Restore terminal
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::terminal::LeaveAlternateScreen
+    )?;
+    crossterm::terminal::disable_raw_mode()?;
+
+    Ok(())
+}
+
+struct App {
+    table_path: String,
+    inspector: DeltaTableInspector,
+    stats: TableStatistics,
+    history: Vec<deltalake::kernel::CommitInfo>,
+    current_tab: usize,
+    should_quit: bool,
+}
+
+impl App {
+    fn ui(&mut self, f: &mut Frame) {
+        let chunks = Layout::default()
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(f.size());
+
+        // Tabs
+        let tabs = Tabs::new(vec!["Overview", "History", "Insights", "Configuration", "Timeline"])
+            .block(Block::default().borders(Borders::ALL).title("Deltective"))
+            .select(self.current_tab)
+            .style(Style::default().fg(Color::White))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::Blue),
+            );
+
+        f.render_widget(tabs, chunks[0]);
+
+        // Tab content
+        let content_chunk = chunks[1];
+        match self.current_tab {
+            0 => overview::render(f, content_chunk, &self.stats),
+            1 => history::render(f, content_chunk, &self.history),
+            2 => insights::render(f, content_chunk, &self.stats),
+            3 => configuration::render(f, content_chunk, &self.table_path, &self.inspector),
+            4 => timeline::render(f, content_chunk, &self.table_path, &self.inspector),
+            _ => {}
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyCode) {
+        match self.current_tab {
+            1 => {
+                // History tab specific keys
+                match key {
+                    KeyCode::Char('n') => {
+                        // Next page - would need to track page state
+                    }
+                    KeyCode::Char('p') => {
+                        // Previous page
+                    }
+                    KeyCode::Char('r') => {
+                        // Reverse sort
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// Helper function to format bytes
+pub fn format_bytes(bytes: i64) -> String {
+    let mut bytes = bytes as f64;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    for unit in &units {
+        if bytes < 1024.0 {
+            return format!("{:.2} {}", bytes, unit);
+        }
+        bytes /= 1024.0;
+    }
+    format!("{:.2} PB", bytes)
+}
+

@@ -60,14 +60,42 @@ class DeltaTableInspector:
         For Azure storage, uses DefaultAzureCredential for authentication.
         """
         self.table_path = table_path
+        # Store credential for Azure paths to enable token refresh
+        self._azure_credential = None
         storage_options = self._get_storage_options(table_path)
-        self.table = DeltaTable(table_path, storage_options=storage_options)
+        try:
+            self.table = DeltaTable(table_path, storage_options=storage_options)
+        except Exception as e:
+            # Provide more helpful error messages for Azure authentication issues
+            if table_path.startswith("abfss://") or table_path.startswith("az://"):
+                error_msg = str(e)
+                if "403" in error_msg or "Forbidden" in error_msg or "not authorized" in error_msg.lower():
+                    raise RuntimeError(
+                        f"Azure authentication failed with 403 Forbidden. "
+                        f"This usually means your Azure identity doesn't have the required permissions. "
+                        f"\n\nTo fix this:\n"
+                        f"1. Ensure your Azure identity has 'Storage Blob Data Reader' role on the storage account\n"
+                        f"2. Verify you're using the correct identity (check with 'az account show')\n"
+                        f"3. If using a service principal, ensure it has the correct RBAC permissions\n"
+                        f"\nOriginal error: {e}"
+                    ) from e
+                elif "401" in error_msg or "Unauthorized" in error_msg:
+                    raise RuntimeError(
+                        f"Azure authentication failed. The access token may have expired or be invalid. "
+                        f"\n\nTo fix this:\n"
+                        f"1. Re-authenticate with 'az login'\n"
+                        f"2. If using environment variables, ensure they are set correctly\n"
+                        f"3. Check that your Azure credentials are valid\n"
+                        f"\nOriginal error: {e}"
+                    ) from e
+            raise
     
-    def _get_storage_options(self, table_path: str) -> Optional[Dict[str, str]]:
+    def _get_storage_options(self, table_path: str) -> Optional[Dict[str, Any]]:
         """Get storage options for the given table path.
 
         For Azure storage paths (abfss://), configures authentication using
-        Azure Default Credentials.
+        Azure Default Credentials. Stores the credential object to enable
+        token refresh if needed.
         """
         if table_path.startswith("abfss://") or table_path.startswith("az://"):
             if not AZURE_AVAILABLE:
@@ -77,8 +105,18 @@ class DeltaTableInspector:
                 )
             # Use Azure Default Credentials
             credential = DefaultAzureCredential()
+            # Store credential for potential token refresh
+            self._azure_credential = credential
             # Get an access token for Azure Storage
-            token = credential.get_token("https://storage.azure.com/.default")
+            # Use the correct scope for Azure Storage
+            try:
+                token = credential.get_token("https://storage.azure.com/.default")
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to obtain Azure access token. "
+                    f"Ensure you are authenticated (e.g., 'az login' or set environment variables). "
+                    f"Original error: {e}"
+                ) from e
 
             return {
                 "bearer_token": token.token,
