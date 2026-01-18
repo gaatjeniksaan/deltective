@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics) {
+pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics, scroll: u16) {
     let analyzer = DeltaTableAnalyzer::new(stats.clone());
     let insights = analyzer.analyze();
 
@@ -92,8 +92,8 @@ pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics) {
     ]));
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Insights"))
-        .scroll((0, 0));
+        .block(Block::default().borders(Borders::ALL).title("Insights [↑↓ scroll]"))
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }

@@ -156,12 +156,12 @@ impl DeltaTableInspector {
         // Get last operation from history
         let last_operation = history.first().map(|entry| {
             let timestamp = DateTime::from_timestamp(
-                entry.timestamp / 1000,
+                entry.timestamp.unwrap_or(0) / 1000,
                 0,
             ).unwrap_or_default();
 
             OperationInfo {
-                operation: entry.operation.clone(),
+                operation: entry.operation.clone().unwrap_or_default(),
                 timestamp,
                 parameters: entry.operation_parameters.clone().unwrap_or_default(),
                 metrics: HashMap::new(), // operation_metrics doesn't exist in deltalake 0.18
@@ -170,14 +170,14 @@ impl DeltaTableInspector {
 
         // Check for last vacuum operation
         let last_vacuum = history.iter()
-            .find(|entry| entry.operation == "VACUUM")
+            .find(|entry| entry.operation.as_deref() == Some("VACUUM"))
             .and_then(|entry| {
-                DateTime::from_timestamp(entry.timestamp / 1000, 0)
+                DateTime::from_timestamp(entry.timestamp.unwrap_or(0) / 1000, 0)
             });
 
         // Get oldest available version
         let oldest_version = history.iter()
-            .map(|entry| entry.read_version)
+            .filter_map(|entry| entry.read_version)
             .min()
             .unwrap_or(0);
 
@@ -388,7 +388,7 @@ impl DeltaTableInspector {
         // Group operations by type
         let mut operations_by_type: HashMap<String, i32> = HashMap::new();
         for entry in &history {
-            let op_type = entry.operation.clone();
+            let op_type = entry.operation.clone().unwrap_or_else(|| "Unknown".to_string());
             *operations_by_type.entry(op_type).or_insert(0) += 1;
         }
 
@@ -437,35 +437,21 @@ impl DeltaTableInspector {
         let mut patterns = Vec::new();
 
         let writes: Vec<_> = history.iter()
-            .filter(|h| matches!(h.operation.as_str(), "WRITE" | "MERGE" | "UPDATE" | "DELETE"))
+            .filter(|h| {
+                matches!(
+                    h.operation.as_deref(),
+                    Some("WRITE") | Some("MERGE") | Some("UPDATE") | Some("DELETE")
+                )
+            })
             .collect();
 
         if writes.is_empty() {
             return patterns;
         }
 
-        // Detect small frequent writes
-        if writes.len() > 10 {
-            // operation_metrics doesn't exist in deltalake 0.18, skip metrics analysis
-            /*
-            let avg_rows: f64 = writes.iter()
-                .filter_map(|h| {
-                    h.operation_metrics.as_ref()?
-                        .get("num_added_rows")?
-                        .as_i64()
-                })
-                .sum::<i64>() as f64 / writes.len() as f64;
-
-            if avg_rows < 1000.0 {
-            */
-            if false { // Disabled since operation_metrics unavailable
-                patterns.push("Small frequent writes detected (avg < 1000 rows)".to_string());
-            }
-        }
-
         // Detect batch vs streaming
         let timestamps: Vec<i64> = writes.iter()
-            .map(|h| h.timestamp)
+            .filter_map(|h| h.timestamp)
             .collect();
 
         if timestamps.len() > 1 {
