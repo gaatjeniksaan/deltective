@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTableInspector) {
+pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTableInspector, scroll: u16) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let timeline_result = rt.block_on(inspector.get_timeline_analysis());
 
@@ -82,7 +82,7 @@ pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTabl
                     };
                     lines.push(Line::from(vec![
                         Span::styled(format!("  {:15}", op_type), Style::default().fg(Color::Cyan)),
-                        Span::styled(&bar, Style::default().fg(Color::Green)),
+                        Span::styled(bar, Style::default().fg(Color::Green)),
                         Span::raw(format!(" {:4} ({:.1}%)", count, pct)),
                     ]));
                 }
@@ -164,8 +164,8 @@ pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTabl
     }
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Timeline"))
-        .scroll((0, 0));
+        .block(Block::default().borders(Borders::ALL).title("Timeline [↑↓ scroll]"))
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }

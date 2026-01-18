@@ -41,6 +41,9 @@ pub fn run_tui(table_path: &str) -> Result<()> {
         history: history.clone(),
         current_tab: 0,
         should_quit: false,
+        scroll_positions: [0; 5],
+        history_page: 0,
+        history_reversed: false,
     };
 
     // Main event loop
@@ -53,9 +56,11 @@ pub fn run_tui(table_path: &str) -> Result<()> {
                     KeyCode::Char('q') => break,
                     KeyCode::Tab => {
                         app.current_tab = (app.current_tab + 1) % 5;
+                        app.scroll_positions[app.current_tab] = 0;
                     }
                     KeyCode::Right => {
                         app.current_tab = (app.current_tab + 1) % 5;
+                        app.scroll_positions[app.current_tab] = 0;
                     }
                     KeyCode::Left => {
                         app.current_tab = if app.current_tab == 0 {
@@ -63,6 +68,27 @@ pub fn run_tui(table_path: &str) -> Result<()> {
                         } else {
                             app.current_tab - 1
                         };
+                        // Reset scroll when switching tabs
+                        app.scroll_positions[app.current_tab] = 0;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let pos = &mut app.scroll_positions[app.current_tab];
+                        *pos = pos.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let pos = &mut app.scroll_positions[app.current_tab];
+                        *pos = pos.saturating_add(1);
+                    }
+                    KeyCode::PageUp => {
+                        let pos = &mut app.scroll_positions[app.current_tab];
+                        *pos = pos.saturating_sub(10);
+                    }
+                    KeyCode::PageDown => {
+                        let pos = &mut app.scroll_positions[app.current_tab];
+                        *pos = pos.saturating_add(10);
+                    }
+                    KeyCode::Home => {
+                        app.scroll_positions[app.current_tab] = 0;
                     }
                     _ => {
                         // Handle tab-specific keys
@@ -95,7 +121,14 @@ struct App {
     history: Vec<deltalake::kernel::CommitInfo>,
     current_tab: usize,
     should_quit: bool,
+    // Scroll position for each tab (vertical offset)
+    scroll_positions: [u16; 5],
+    // History tab pagination
+    history_page: usize,
+    history_reversed: bool,
 }
+
+const HISTORY_PAGE_SIZE: usize = 10;
 
 impl App {
     fn ui(&mut self, f: &mut Frame) {
@@ -118,12 +151,21 @@ impl App {
 
         // Tab content
         let content_chunk = chunks[1];
+        let scroll = self.scroll_positions[self.current_tab];
         match self.current_tab {
-            0 => overview::render(f, content_chunk, &self.stats),
-            1 => history::render(f, content_chunk, &self.history),
-            2 => insights::render(f, content_chunk, &self.stats),
-            3 => configuration::render(f, content_chunk, &self.table_path, &self.inspector),
-            4 => timeline::render(f, content_chunk, &self.table_path, &self.inspector),
+            0 => overview::render(f, content_chunk, &self.stats, scroll),
+            1 => history::render(
+                f,
+                content_chunk,
+                &self.history,
+                scroll,
+                self.history_page,
+                self.total_history_pages(),
+                self.history_reversed,
+            ),
+            2 => insights::render(f, content_chunk, &self.stats, scroll),
+            3 => configuration::render(f, content_chunk, &self.table_path, &self.inspector, scroll),
+            4 => timeline::render(f, content_chunk, &self.table_path, &self.inspector, scroll),
             _ => {}
         }
     }
@@ -132,21 +174,38 @@ impl App {
         match self.current_tab {
             1 => {
                 // History tab specific keys
+                let total_pages = (self.history.len() + HISTORY_PAGE_SIZE - 1) / HISTORY_PAGE_SIZE;
                 match key {
                     KeyCode::Char('n') => {
-                        // Next page - would need to track page state
+                        // Next page
+                        if self.history_page + 1 < total_pages {
+                            self.history_page += 1;
+                            self.scroll_positions[1] = 0; // Reset scroll on page change
+                        }
                     }
                     KeyCode::Char('p') => {
                         // Previous page
+                        if self.history_page > 0 {
+                            self.history_page -= 1;
+                            self.scroll_positions[1] = 0;
+                        }
                     }
                     KeyCode::Char('r') => {
                         // Reverse sort
+                        self.history_reversed = !self.history_reversed;
+                        self.history.reverse();
+                        self.history_page = 0;
+                        self.scroll_positions[1] = 0;
                     }
                     _ => {}
                 }
             }
             _ => {}
         }
+    }
+
+    fn total_history_pages(&self) -> usize {
+        (self.history.len() + HISTORY_PAGE_SIZE - 1) / HISTORY_PAGE_SIZE
     }
 }
 

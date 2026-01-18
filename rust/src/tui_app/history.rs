@@ -2,90 +2,108 @@ use chrono::DateTime;
 use deltalake::kernel::CommitInfo;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
-pub fn render(f: &mut Frame, area: Rect, history: &[CommitInfo]) {
+const PAGE_SIZE: usize = 10;
+
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    history: &[CommitInfo],
+    scroll: u16,
+    current_page: usize,
+    total_pages: usize,
+    reversed: bool,
+) {
     let mut lines = Vec::new();
 
+    // Header with sort order indicator
+    let sort_indicator = if reversed { "oldest first" } else { "newest first" };
     lines.push(Line::from(vec![
-        Span::styled("═══ OPERATION HISTORY ═══", Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Span::styled("═══ OPERATION HISTORY ═══", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" ({})", sort_indicator), Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(""));
 
-    // Show first 10 entries
-    for entry in history.iter().take(10) {
-        let version = entry.read_version;
-        let operation = entry.operation.as_deref().unwrap_or("Unknown");
-        let timestamp = DateTime::from_timestamp(entry.timestamp.unwrap_or(0) / 1000, 0)
-            .unwrap_or_default()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
+    // Calculate page bounds
+    let start_idx = current_page * PAGE_SIZE;
+    let end_idx = std::cmp::min(start_idx + PAGE_SIZE, history.len());
 
+    if history.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(format!("Version {}", version), Style::default().fg(Color::Yellow)),
-            Span::raw(" - "),
-            Span::styled(operation.to_string(), Style::default().fg(Color::Cyan)),
-            Span::raw(" - "),
-            Span::styled(timestamp, Style::default().fg(Color::Green)),
+            Span::styled("No history entries found.", Style::default().fg(Color::DarkGray)),
         ]));
+    } else {
+        // Show entries for current page
+        for entry in history.iter().skip(start_idx).take(PAGE_SIZE) {
+            let version = entry.read_version.unwrap_or(0);
+            let operation = entry.operation.as_deref().unwrap_or("Unknown");
+            let timestamp = DateTime::from_timestamp(entry.timestamp.unwrap_or(0) / 1000, 0)
+                .unwrap_or_default()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
 
-        // Add operation parameters
-        if let Some(params) = &entry.operation_parameters {
-            if !params.is_empty() {
-                let param_strs: Vec<String> = params
-                    .iter()
-                    .filter_map(|(k, v): (&String, &serde_json::Value)| {
-                        match k.as_str() {
-                            "mode" => Some(format!("mode={}", v)),
-                            "partitionBy" => Some("partitioned".to_string()),
-                            "predicate" => Some(format!("where: {}", v)),
-                            _ => None,
-                        }
-                    })
-                    .collect();
-                if !param_strs.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", Style::default().fg(Color::DarkGray)),
-                        Span::raw(param_strs.join(", ")),
-                    ]));
+            lines.push(Line::from(vec![
+                Span::styled(format!("Version {}", version), Style::default().fg(Color::Yellow)),
+                Span::raw(" - "),
+                Span::styled(operation.to_string(), Style::default().fg(Color::Cyan)),
+                Span::raw(" - "),
+                Span::styled(timestamp, Style::default().fg(Color::Green)),
+            ]));
+
+            // Add operation parameters
+            if let Some(params) = &entry.operation_parameters {
+                if !params.is_empty() {
+                    let param_strs: Vec<String> = params
+                        .iter()
+                        .filter_map(|(k, v): (&String, &serde_json::Value)| {
+                            match k.as_str() {
+                                "mode" => Some(format!("mode={}", v)),
+                                "partitionBy" => Some("partitioned".to_string()),
+                                "predicate" => Some(format!("where: {}", v)),
+                                _ => None,
+                            }
+                        })
+                        .collect();
+                    if !param_strs.is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                            Span::raw(param_strs.join(", ")),
+                        ]));
+                    }
                 }
             }
+
+            lines.push(Line::from(""));
         }
 
-        // Add metrics (operation_metrics doesn't exist in deltalake 0.18, skip metrics display)
-        if let Some(metrics) = &None::<HashMap<String, serde_json::Value>> {
-            let mut metric_strs = Vec::new();
-            if let Some(num_added_files) = metrics.get("num_added_files").and_then(|v: &serde_json::Value| v.as_i64()) {
-                metric_strs.push(format!("+{} files", num_added_files));
-            }
-            if let Some(num_removed_files) = metrics.get("num_removed_files").and_then(|v: &serde_json::Value| v.as_i64()) {
-                metric_strs.push(format!("-{} files", num_removed_files));
-            }
-            if let Some(num_added_rows) = metrics.get("num_added_rows").and_then(|v: &serde_json::Value| v.as_i64()) {
-                metric_strs.push(format!("+{} rows", num_added_rows));
-            }
-            if let Some(num_deleted_rows) = metrics.get("num_deleted_rows").and_then(|v: &serde_json::Value| v.as_i64()) {
-                metric_strs.push(format!("-{} rows", num_deleted_rows));
-            }
-            if !metric_strs.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::styled("  ", Style::default().fg(Color::DarkGray)),
-                    Span::raw(metric_strs.join(", ")),
-                ]));
-            }
-        }
-
+        // Pagination info
         lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("───────────────────────────────────────", Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("Showing {}-{} of {} entries", start_idx + 1, end_idx, history.len()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
     }
 
+    // Build title with navigation hints
+    let title = format!(
+        "History [Page {}/{} | n:next p:prev r:reverse | ↑↓:scroll]",
+        current_page + 1,
+        total_pages.max(1)
+    );
+
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("History"))
-        .scroll((0, 0));
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }
-

@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics) {
+pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics, scroll: u16) {
     let mut lines = Vec::new();
 
     // Table Overview
@@ -161,8 +161,8 @@ pub fn render(f: &mut Frame, area: Rect, stats: &TableStatistics) {
     }
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL))
-        .scroll((0, 0));
+        .block(Block::default().borders(Borders::ALL).title("Overview [↑↓ scroll]"))
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }

@@ -9,7 +9,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTableInspector) {
+pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTableInspector, scroll: u16) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let config_result = rt.block_on(inspector.get_configuration());
 
@@ -192,8 +192,8 @@ pub fn render(f: &mut Frame, area: Rect, table_path: &str, inspector: &DeltaTabl
     }
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Configuration"))
-        .scroll((0, 0));
+        .block(Block::default().borders(Borders::ALL).title("Configuration [↑↓ scroll]"))
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }
