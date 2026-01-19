@@ -118,10 +118,41 @@ class DeltaTableInspector:
                     f"Original error: {e}"
                 ) from e
 
-            return {
+            # Extract account name from ABFSS URL
+            # Format: abfss://container@account.dfs.core.windows.net/path
+            account_name = self._extract_azure_account_name(table_path)
+
+            storage_options = {
                 "bearer_token": token.token,
                 "use_fabric_endpoint": "false",
             }
+
+            # Add account_name if we could extract it from the URL
+            if account_name:
+                storage_options["account_name"] = account_name
+
+            return storage_options
+        return None
+
+    def _extract_azure_account_name(self, table_path: str) -> Optional[str]:
+        """Extract the Azure storage account name from an ABFSS or AZ URL.
+
+        Supports formats:
+        - abfss://container@account.dfs.core.windows.net/path
+        - abfss://container@account.blob.core.windows.net/path
+        - az://container/path (account name not in URL)
+        """
+        import re
+
+        if table_path.startswith("abfss://"):
+            # Format: abfss://container@account.dfs.core.windows.net/path
+            # or: abfss://container@account.blob.core.windows.net/path
+            match = re.match(r"abfss://[^@]+@([^.]+)\.", table_path)
+            if match:
+                return match.group(1)
+
+        # For az:// URLs, account name is typically not in the URL
+        # and would need to be provided separately or via environment variables
         return None
 
     def get_statistics(self) -> TableStatistics:

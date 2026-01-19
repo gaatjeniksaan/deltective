@@ -181,3 +181,42 @@ class TestDeltaTableInspector:
         assert "enabled" in features["column_mapping"]
         assert isinstance(features["auto_optimize"], dict)
         assert "enabled" in features["auto_optimize"]
+
+
+class TestAzureAccountNameExtraction:
+    """Test Azure account name extraction from URLs."""
+
+    def test_extract_account_name_abfss_dfs(self, temp_delta_table: Path):
+        """Test extracting account name from abfss:// URL with dfs endpoint."""
+        inspector = DeltaTableInspector(str(temp_delta_table))
+        url = "abfss://container@myaccount.dfs.core.windows.net/path/to/table"
+        account_name = inspector._extract_azure_account_name(url)
+        assert account_name == "myaccount"
+
+    def test_extract_account_name_abfss_blob(self, temp_delta_table: Path):
+        """Test extracting account name from abfss:// URL with blob endpoint."""
+        inspector = DeltaTableInspector(str(temp_delta_table))
+        url = "abfss://container@storageacct.blob.core.windows.net/path"
+        account_name = inspector._extract_azure_account_name(url)
+        assert account_name == "storageacct"
+
+    def test_extract_account_name_abfss_complex(self, temp_delta_table: Path):
+        """Test extracting account name from real-world abfss:// URL."""
+        inspector = DeltaTableInspector(str(temp_delta_table))
+        url = "abfss://landing-zone@stpdatalake44dk98.dfs.core.windows.net/sharepoint/cea_country_mapping"
+        account_name = inspector._extract_azure_account_name(url)
+        assert account_name == "stpdatalake44dk98"
+
+    def test_extract_account_name_az_url(self, temp_delta_table: Path):
+        """Test that az:// URLs return None (no account name in URL)."""
+        inspector = DeltaTableInspector(str(temp_delta_table))
+        url = "az://container/path/to/table"
+        account_name = inspector._extract_azure_account_name(url)
+        assert account_name is None
+
+    def test_extract_account_name_local_path(self, temp_delta_table: Path):
+        """Test that local paths return None."""
+        inspector = DeltaTableInspector(str(temp_delta_table))
+        url = "/local/path/to/table"
+        account_name = inspector._extract_azure_account_name(url)
+        assert account_name is None
